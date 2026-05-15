@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wiata na wymiar — podgląd 3D</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #111110; --panel: #1a1a18; --border: rgba(255,255,255,0.07);
+  --text: #f0ede6; --muted: #888780; --accent: #1D9E75;
+  --font: 'Barlow', sans-serif; --font-cond: 'Barlow Condensed', sans-serif;
+}
+html, body { height: 100%; font-family: var(--font); background: var(--bg); color: var(--text); overflow: hidden; }
+header {
+  position: fixed; top: 0; left: 0; right: 0; height: 54px;
+  background: var(--panel); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px; z-index: 100;
+}
+.brand { font-family: var(--font-cond); font-size: 15px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text); text-decoration: none; }
+.brand span { color: var(--accent); }
+.header-tag { font-size: 12px; color: var(--muted); }
+#canvas-wrap {
+  position: absolute; inset: 54px 0 0 0;
+  background: radial-gradient(ellipse at 40% 50%, #1e2420 0%, #111110 70%);
+}
+canvas { display: block; width: 100% !important; height: 100% !important; }
+.hint {
+  position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 16px; font-size: 11px; color: var(--muted);
+  pointer-events: none; opacity: 0.6;
+}
+.hint-item { display: flex; align-items: center; gap: 5px; }
+.hint-icon {
+  width: 20px; height: 20px; border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px;
+}
+#loading {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 16px; z-index: 10;
+}
+.spinner {
+  width: 36px; height: 36px; border: 2px solid var(--border);
+  border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text { font-size: 13px; color: var(--muted); }
+#error-msg {
+  display: none; position: absolute; inset: 0;
+  flex-direction: column; align-items: center; justify-content: center; gap: 12px; z-index: 10;
+}
+.error-title { font-family: var(--font-cond); font-size: 20px; font-weight: 600; }
+.error-sub { font-size: 13px; color: var(--muted); text-align: center; max-width: 320px; line-height: 1.6; }
+.cta-float {
+  position: absolute; bottom: 24px; right: 24px;
+  background: var(--accent); color: #fff; border: none; border-radius: 6px;
+  padding: 12px 20px; font-family: var(--font); font-size: 14px; font-weight: 600;
+  cursor: pointer; text-decoration: none; display: none; transition: opacity 0.15s;
+}
+.cta-float:hover { opacity: 0.85; }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="brand" href="https://wiatynawymiar.pl">Wiaty<span>NaWymiar</span>.pl</a>
+  <span class="header-tag" id="header-tag">Podgląd 3D</span>
+</header>
+
+<div id="canvas-wrap">
+  <div id="loading">
+    <div class="spinner"></div>
+    <span class="loading-text" id="loading-text">Ładowanie modelu…</span>
+  </div>
+  <div id="error-msg">
+    <span class="error-title">Nie znaleziono modelu</span>
+    <span class="error-sub" id="error-sub"></span>
+  </div>
+  <canvas id="c"></canvas>
+  <div class="hint">
+    <div class="hint-item"><div class="hint-icon">⟳</div> obracaj</div>
+    <div class="hint-item"><div class="hint-icon">⤢</div> zoom</div>
+    <div class="hint-item"><div class="hint-icon">✥</div> przesuwaj</div>
+  </div>
+  <a class="cta-float" id="cta" href="https://wiatynawymiar.pl/konfigurator" target="_blank" rel="noopener">Zapytaj o tę wiatę</a>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const params  = new URLSearchParams(window.location.search);
+const klient  = params.get('klient') || '';
+const glbFile = klient ? klient + '.glb' : '';
+
+if (klient) {
+  document.getElementById('header-tag').textContent = 'Podgląd 3D · ' + klient;
+  document.getElementById('cta').href =
+    'mailto:kontakt@wiatynawymiar.pl?subject=' + encodeURIComponent('Zapytanie — ' + klient);
+}
+
+function showError(msg) {
+  document.getElementById('loading').style.display = 'none';
+  const el = document.getElementById('error-msg');
+  el.style.display = 'flex';
+  document.getElementById('error-sub').textContent = msg;
+}
+
+if (!glbFile) { showError('Brak parametru ?klient= w adresie URL.'); }
+
+const canvas   = document.getElementById('c');
+const wrap     = document.getElementById('canvas-wrap');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.outputColorSpace  = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
+renderer.toneMapping       = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(40, 1, 0.01, 1000);
+camera.position.set(8, 5, 10);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.07;
+controls.minDistance   = 1;
+controls.maxDistance   = 60;
+controls.maxPolarAngle = Math.PI / 2 + 0.05;
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+
+const sun = new THREE.DirectionalLight(0xfff5e0, 1.8);
+sun.position.set(10, 20, 10);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -20; sun.shadow.camera.right = 20;
+sun.shadow.camera.top  =  20; sun.shadow.camera.bottom = -20;
+sun.shadow.camera.far  = 100;
+scene.add(sun);
+
+const fill = new THREE.DirectionalLight(0xd0e8ff, 0.4);
+fill.position.set(-10, 5, -5);
+scene.add(fill);
+
+scene.add(new THREE.GridHelper(40, 40, 0x2a2a28, 0x1e1e1c));
+
+function onResize() {
+  renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+  camera.aspect = wrap.clientWidth / wrap.clientHeight;
+  camera.updateProjectionMatrix();
+}
+onResize();
+window.addEventListener('resize', onResize);
+
+if (glbFile) {
+  const loader = new GLTFLoader();
+  loader.load(
+    glbFile,
+    (gltf) => {
+      const model = gltf.scene;
+      model.traverse(n => {
+        if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; }
+      });
+
+      // Wycentruj model przez pivot
+      const box    = new THREE.Box3().setFromObject(model);
+      const center = box.getCenter(new THREE.Vector3());
+      const size   = box.getSize(new THREE.Vector3());
+
+      const pivot = new THREE.Group();
+      scene.add(pivot);
+      pivot.add(model);
+      model.position.set(-center.x, -box.min.y, -center.z);
+
+      const d = Math.max(size.x, size.y, size.z) * 2.2;
+      camera.position.set(d * 0.8, d * 0.55, d);
+      controls.target.set(0, size.y * 0.3, 0);
+      controls.update();
+
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('cta').style.display = 'block';
+    },
+    (xhr) => {
+      if (xhr.total) {
+        document.getElementById('loading-text').textContent =
+          'Ładowanie… ' + Math.round(xhr.loaded / xhr.total * 100) + '%';
+      }
+    },
+    () => showError('Nie można załadować "' + glbFile + '". Sprawdź czy plik istnieje na serwerze.')
+  );
+}
+
+(function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>
